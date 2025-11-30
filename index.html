@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Minvy Key System</title>
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-database-compat.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Arial', sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #ffffff;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: rgba(30, 30, 46, 0.9);
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 8px 32px rgba(148, 87, 235, 0.3);
+            border: 1px solid rgba(148, 87, 235, 0.2);
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            color: #e2e2e2;
+            font-size: 2.2em;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+        }
+
+        .key-display {
+            font-size: 1.4em;
+            font-weight: bold;
+            text-align: center;
+            margin: 25px 0;
+            padding: 20px;
+            background: rgba(20, 20, 35, 0.8);
+            border: 2px dashed #9457eb;
+            border-radius: 10px;
+            letter-spacing: 2px;
+            color: #ffffff;
+            min-height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .btn {
+            display: block;
+            width: 100%;
+            padding: 15px;
+            margin: 15px 0;
+            border: none;
+            border-radius: 8px;
+            font-size: 1.1em;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .generate-btn {
+            background: linear-gradient(135deg, #9457eb 0%, #c445f4 100%);
+            color: white;
+        }
+
+        .generate-btn:hover:not(:disabled) {
+            background: linear-gradient(135deg, #8457db 0%, #b435e4 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(148, 87, 235, 0.4);
+        }
+
+        .generate-btn:disabled {
+            background: #555;
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+
+        .copy-btn {
+            background: linear-gradient(135deg, #ff6b9d 0%, #ff8fab 100%);
+            color: white;
+        }
+
+        .copy-btn:hover {
+            background: linear-gradient(135deg, #e55b8d 0%, #e57f9b 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(255, 107, 157, 0.4);
+        }
+
+        .timer {
+            text-align: center;
+            margin: 15px 0;
+            font-size: 1.1em;
+            color: #ff6b9d;
+            font-weight: bold;
+        }
+
+        .status {
+            text-align: center;
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+
+        .status.success {
+            background: rgba(46, 204, 113, 0.2);
+            color: #2ecc71;
+            border: 1px solid #2ecc71;
+        }
+
+        .status.error {
+            background: rgba(231, 76, 60, 0.2);
+            color: #e74c3c;
+            border: 1px solid #e74c3c;
+        }
+
+        .status.info {
+            background: rgba(52, 152, 219, 0.2);
+            color: #3498db;
+            border: 1px solid #3498db;
+        }
+
+        .cooldown-info {
+            text-align: center;
+            margin-top: 20px;
+            color: #aaa;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔑 Minvy Key System</h1>
+        
+        <div class="key-display" id="keyDisplay">
+            Нажмите "Сгенерировать ключ"
+        </div>
+
+        <div class="timer" id="timer"></div>
+        <div class="status" id="status"></div>
+
+        <button class="btn generate-btn" id="generateBtn" onclick="generateKey()">
+            Сгенерировать ключ
+        </button>
+
+        <button class="btn copy-btn" id="copyBtn" onclick="copyKey()" disabled>
+            📋 Копировать ключ
+        </button>
+
+        <div class="cooldown-info">
+            ⏰ Можно генерировать 1 ключ в час с одного IP
+        </div>
+    </div>
+
+    <script>
+        // ЗАШИФРОВАННЫЙ URL БАЗЫ ДАННЫХ В BASE64
+        const encryptedDB = "aHR0cHM6Ly9qdW1wZWVyOS05MzU0YS1kZWZhdWx0LXJ0ZGIuZmlyZWJhc2Vpby5jb20v";
+        
+        // Декодируем URL базы
+        function decodeDB() {
+            return atob(encryptedDB);
+        }
+
+        // Firebase configuration
+        const firebaseConfig = {
+            databaseURL: decodeDB()
+        };
+
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+        const database = firebase.database();
+
+        let currentKey = '';
+        let lastGenerationTime = localStorage.getItem('lastKeyGeneration');
+        let userIP = '';
+        let deviceId = '';
+
+        // Получаем IP пользователя
+        async function getUserIP() {
+            try {
+                const response = await fetch('https://api.ipify.org?format=json');
+                const data = await response.json();
+                userIP = data.ip;
+            } catch (error) {
+                userIP = 'unknown-ip';
+            }
+        }
+
+        // Генерируем ID устройства
+        function getDeviceId() {
+            let id = localStorage.getItem('deviceId');
+            if (!id) {
+                id = 'device-' + Math.random().toString(36).substr(2, 9) + '-' + Date.now();
+                localStorage.setItem('deviceId', id);
+            }
+            return id;
+        }
+
+        // Генерация ключа в формате XXXX-XXXX-XXXX
+        function generateKeyFormat() {
+            const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+            let key = '';
+            
+            for (let i = 0; i < 12; i++) {
+                if (i > 0 && i % 4 === 0) {
+                    key += '-';
+                }
+                key += chars.charAt(Math.floor(Math.random() * chars.length));
+            }
+            
+            return key;
+        }
+
+        // Генерация случайного числа от 1 до 9999999
+        function generateRandomNumber() {
+            return Math.floor(Math.random() * 9999999) + 1;
+        }
+
+        // Проверка времени с последней генерации
+        function canGenerateKey() {
+            if (!lastGenerationTime) return true;
+            
+            const now = Date.now();
+            const lastTime = parseInt(lastGenerationTime);
+            const oneHour = 60 * 60 * 1000;
+            
+            return (now - lastTime) >= oneHour;
+        }
+
+        // Обновление таймера
+        function updateTimer() {
+            const timerElement = document.getElementById('timer');
+            const generateBtn = document.getElementById('generateBtn');
+            
+            if (!lastGenerationTime) {
+                timerElement.textContent = '';
+                generateBtn.disabled = false;
+                return;
+            }
+            
+            const now = Date.now();
+            const lastTime = parseInt(lastGenerationTime);
+            const oneHour = 60 * 60 * 1000;
+            const timePassed = now - lastTime;
+            const timeLeft = oneHour - timePassed;
+            
+            if (timeLeft <= 0) {
+                timerElement.textContent = '';
+                generateBtn.disabled = false;
+                showStatus('Можно генерировать новый ключ!', 'success');
+            } else {
+                const minutes = Math.floor(timeLeft / 60000);
+                const seconds = Math.floor((timeLeft % 60000) / 1000);
+                timerElement.textContent = `До следующей генерации: ${minutes}:${seconds.toString().padStart(2, '0')}`;
+                generateBtn.disabled = true;
+            }
+        }
+
+        // Показать статус
+        function showStatus(message, type) {
+            const statusElement = document.getElementById('status');
+            statusElement.textContent = message;
+            statusElement.className = 'status ' + type;
+            
+            setTimeout(() => {
+                statusElement.textContent = '';
+                statusElement.className = 'status';
+            }, 5000);
+        }
+
+        // Основная функция генерации ключа
+        async function generateKey() {
+            await getUserIP();
+            deviceId = getDeviceId();
+            
+            if (!canGenerateKey()) {
+                showStatus('Подождите 1 час перед генерацией нового ключа!', 'error');
+                return;
+            }
+
+            // Генерация ключа и случайного числа
+            currentKey = generateKeyFormat();
+            const randomNum = generateRandomNumber();
+            
+            document.getElementById('keyDisplay').textContent = currentKey;
+            document.getElementById('copyBtn').disabled = false;
+            
+            // Сохраняем время генерации
+            lastGenerationTime = Date.now().toString();
+            localStorage.setItem('lastKeyGeneration', lastGenerationTime);
+            
+            // Подготовка данных для отправки
+            const dataToSend = {
+                key: currentKey,
+                randomNumber: randomNum,
+                ip: userIP,
+                deviceId: deviceId,
+                timestamp: new Date().toISOString(),
+                generatedAt: Date.now()
+            };
+            
+            // Отправляем в Firebase (данные НЕ шифруем, но URL базы зашифрован)
+            try {
+                const keyRef = database.ref('keys/' + Date.now());
+                await keyRef.set(dataToSend);
+                
+                showStatus(`Ключ успешно сгенерирован! Случайное число: ${randomNum}`, 'success');
+            } catch (error) {
+                showStatus('Ошибка сохранения в базу данных', 'error');
+                console.error('Firebase error:', error);
+            }
+            
+            // Обновляем таймер
+            updateTimer();
+        }
+
+        // Копирование ключа
+        function copyKey() {
+            if (!currentKey) return;
+            
+            navigator.clipboard.writeText(currentKey).then(() => {
+                showStatus('Ключ скопирован в буфер обмена!', 'success');
+            }).catch(() => {
+                const textArea = document.createElement('textarea');
+                textArea.value = currentKey;
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
+                showStatus('Ключ скопирован!', 'success');
+            });
+        }
+
+        // Инициализация при загрузке
+        document.addEventListener('DOMContentLoaded', function() {
+            updateTimer();
+            setInterval(updateTimer, 1000);
+            
+            if (lastGenerationTime) {
+                const lastGen = new Date(parseInt(lastGenerationTime));
+                showStatus(`Последняя генерация: ${lastGen.toLocaleString()}`, 'info');
+            }
+        });
+    </script>
+</body>
+</html>
